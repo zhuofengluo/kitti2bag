@@ -15,13 +15,16 @@ import cv2
 import rospy
 import rosbag
 import progressbar
+import PyKDL as kd
 from tf2_msgs.msg import TFMessage
 from datetime import datetime
 from std_msgs.msg import Header
 from sensor_msgs.msg import CameraInfo, Imu, PointField, NavSatFix
+from visualization_msgs.msg import Marker, MarkerArray
 import sensor_msgs.point_cloud2 as pcl2
-from geometry_msgs.msg import TransformStamped, TwistStamped, Transform
+from geometry_msgs.msg import TransformStamped, TwistStamped, Transform, PolygonStamped, Point32
 from cv_bridge import CvBridge
+import parseTrackletXML
 import numpy as np
 import argparse
 
@@ -188,9 +191,41 @@ def save_velo_data(bag, kitti, velo_frame_id, topic):
                   PointField('z', 8, PointField.FLOAT32, 1),
                   PointField('i', 12, PointField.FLOAT32, 1)]
         pcl_msg = pcl2.create_cloud(header, fields, scan)
-
         bag.write(topic + '/pointcloud', pcl_msg, t=pcl_msg.header.stamp)
 
+def save_tracklet_data(bag, tracklets, timestamps, topic):
+    print("Exporting tracklet data")
+    n_frames = len(timestamps)
+    markers_dict = {}
+    for i in range(n_frames):
+        markers_dict[i] = MarkerArray()
+        markers_dict[i].markers = []
+
+    for tid, tracklet in enumerate(tracklets):
+        h,w,l = tracklet.size
+        for translation, rotation, state, occlusion, truncation, amtOcclusion, amtBorders, absoluteFrameNumber in tracklet:
+            timestamp = timestamps[absoluteFrameNumber]
+            marker = Marker()
+            marker.id = tid
+            marker.type = Marker.CUBE
+            marker.text = tracklet.objectType
+            marker.header.frame_id = str(absoluteFrameNumber)
+            marker.header.stamp = rospy.Time.from_sec(float(timestamp.strftime("%s.%f")))
+            marker.pose.position.x = translation[0]
+            marker.pose.position.y = translation[1]
+            marker.pose.position.z = translation[2]
+            rotq = kd.Rotation.RPY(rotation[0], rotation[1], rotation[2]).GetQuaternion()
+            marker.pose.orientation.x = rotq[0]
+            marker.pose.orientation.y = rotq[1]
+            marker.pose.orientation.z = rotq[2]
+            marker.pose.orientation.w = rotq[3]
+            marker.scale.x = l
+            marker.scale.y = w
+            marker.scale.z = h
+            markers_dict[absoluteFrameNumber].markers.append(marker)
+
+    for i in markers_dict:
+        bag.write(topic, markers_dict[i], t=rospy.Time.from_sec(float(timestamps[i].strftime("%s.%f"))))
 
 def get_static_transform(from_frame_id, to_frame_id, transform):
     t = transform[0:3, 3]
@@ -315,6 +350,7 @@ def run_kitti2bag():
             gps_vel_topic = '/kitti/oxts/gps/vel'
             velo_frame_id = 'velo_link'
             velo_topic = '/kitti/velo'
+            tracklet_topic = '/kitti/tracklet'
 
             T_base_link_to_imu = np.eye(4, 4)
             T_base_link_to_imu[0:3, 3] = [-2.71/2.0-0.05, 0.32, 0.93]
@@ -328,9 +364,7 @@ def run_kitti2bag():
                 (imu_frame_id, cameras[2][1], inv(kitti.calib.T_cam2_imu)),
                 (imu_frame_id, cameras[3][1], inv(kitti.calib.T_cam3_imu))
             ]
-
             util = pykitti.utils.read_calib_file(os.path.join(kitti.calib_path, 'calib_cam_to_cam.txt'))
-
             # Export
             save_static_transforms(bag, transforms, kitti.timestamps)
             save_dynamic_tf(bag, kitti, args.kitti_type, initial_time=None)
@@ -340,8 +374,13 @@ def run_kitti2bag():
             for camera in cameras:
                 save_camera_data(bag, args.kitti_type, kitti, util, bridge, camera=camera[0], camera_frame_id=camera[1], topic=camera[2], initial_time=None)
             save_velo_data(bag, kitti, velo_frame_id, velo_topic)
+            tracklet_labels = os.path.join(kitti.data_path, "tracklet_labels.xml")
+            if os.path.exists(tracklet_labels):
+                tracklets = parseTrackletXML.parseXML(tracklet_labels)
+                save_tracklet_data(bag, tracklets, kitti.timestamps, tracklet_topic)
 
         finally:
+            bag.flush()
             print("## OVERVIEW ##")
             print(bag)
             bag.close()
@@ -354,7 +393,7 @@ def run_kitti2bag():
             sys.exit(1)
             
         bag = rosbag.Bag("kitti_data_odometry_{}_sequence_{}.bag".format(args.kitti_type[5:],args.sequence), 'w', compression=compression)
-        
+    
         kitti = pykitti.odometry(args.dir, args.sequence)
         if not os.path.exists(kitti.sequence_path):
             print('Path {} does not exists. Exiting.'.format(kitti.sequence_path))
