@@ -1,12 +1,12 @@
-FROM ros:lunar-ros-base
+FROM ros:melodic-ros-core
 
-RUN apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get -y install \
-    ros-lunar-cv-bridge \
-    ros-lunar-opencv3 \
-    ros-lunar-tf \
+RUN sed -i s@/archive.ubuntu.com/@/mirrors.aliyun.com/@g /etc/apt/sources.list
+RUN apt update \
+    && DEBIAN_FRONTEND=noninteractive apt -y install \
+    ros-melodic-cv-bridge \
+    ros-melodic-tf \
     python-pip python-matplotlib \
-  && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 COPY . /kitti2bag
 RUN pip install -e /kitti2bag
 

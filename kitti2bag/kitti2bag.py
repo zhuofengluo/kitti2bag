@@ -15,7 +15,6 @@ import cv2
 import rospy
 import rosbag
 import progressbar
-import PyKDL as kd
 from tf2_msgs.msg import TFMessage
 from datetime import datetime
 from std_msgs.msg import Header
@@ -193,6 +192,24 @@ def save_velo_data(bag, kitti, velo_frame_id, topic):
         pcl_msg = pcl2.create_cloud(header, fields, scan)
         bag.write(topic + '/pointcloud', pcl_msg, t=pcl_msg.header.stamp)
 
+def get_quaternion_from_euler(roll, pitch, yaw):
+    """
+    Convert an Euler angle to a quaternion.
+    
+    Input
+        :param roll: The roll (rotation around x-axis) angle in radians.
+        :param pitch: The pitch (rotation around y-axis) angle in radians.
+        :param yaw: The yaw (rotation around z-axis) angle in radians.
+    
+    Output
+        :return qx, qy, qz, qw: The orientation in quaternion [x,y,z,w] format
+    """
+    qx = np.sin(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) - np.cos(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
+    qy = np.cos(roll/2) * np.sin(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.cos(pitch/2) * np.sin(yaw/2)
+    qz = np.cos(roll/2) * np.cos(pitch/2) * np.sin(yaw/2) - np.sin(roll/2) * np.sin(pitch/2) * np.cos(yaw/2)
+    qw = np.cos(roll/2) * np.cos(pitch/2) * np.cos(yaw/2)
+    return [qx, qy, qz, qw]
+
 def save_tracklet_data(bag, tracklets, timestamps, topic):
     print("Exporting tracklet data")
     n_frames = len(timestamps)
@@ -214,7 +231,7 @@ def save_tracklet_data(bag, tracklets, timestamps, topic):
             marker.pose.position.x = translation[0]
             marker.pose.position.y = translation[1]
             marker.pose.position.z = translation[2]
-            rotq = kd.Rotation.RPY(rotation[0], rotation[1], rotation[2]).GetQuaternion()
+            rotq = get_quaternion_from_euler(rotation[0], rotation[1], rotation[2])
             marker.pose.orientation.x = rotq[0]
             marker.pose.orientation.y = rotq[1]
             marker.pose.orientation.z = rotq[2]
